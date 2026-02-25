@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 
 XML_URL = "https://www.snb.ch/public/en/rss/interestRates"
 TARGET_RATE_NAME = "SARH"
-OUT_PATH = os.getenv("OUT_PATH", "public/result.json")
+OUT_PATH = os.getenv("OUT_PATH", "docs/result.json")
 
 
 def localname(tag: str) -> str:
