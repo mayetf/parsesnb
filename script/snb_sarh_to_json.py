@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import datetime as dt
+from typing import Optional
 from urllib.request import urlopen, Request
 import xml.etree.ElementTree as ET
 
@@ -45,7 +46,7 @@ def parse_date_to_yyyy_mm_dd(s: str) -> str:
     return d.date().isoformat()
 
 
-def find_first_desc_text(parent: ET.Element, wanted_local: str) -> str | None:
+def find_first_desc_text(parent: ET.Element, wanted_local: str) -> Optional[str]:
     """Return first descendant text where localname(tag) == wanted_local."""
     for el in parent.iter():
         if localname(el.tag) == wanted_local:
@@ -55,13 +56,12 @@ def find_first_desc_text(parent: ET.Element, wanted_local: str) -> str | None:
     return None
 
 
-def find_item_by_rate_name(root: ET.Element, rate_name: str) -> ET.Element | None:
+def find_item_by_rate_name(root: ET.Element, rate_name: str) -> Optional[ET.Element]:
     """Find the <item> that contains <...:rateName>rate_name</...:rateName> anywhere inside."""
     for el in root.iter():
         if localname(el.tag) != "item":
             continue
 
-        # look for any descendant with localname == 'rateName'
         for rn in el.iter():
             if localname(rn.tag) == "rateName" and (rn.text or "").strip() == rate_name:
                 return el
@@ -69,14 +69,10 @@ def find_item_by_rate_name(root: ET.Element, rate_name: str) -> ET.Element | Non
     return None
 
 
-def find_observation_value(item: ET.Element) -> str | None:
-    """
-    Find cb:value specifically inside cb:observation in the selected item.
-    """
-    # Find first <...:observation> inside item
+def find_observation_value(item: ET.Element) -> Optional[str]:
+    """Find cb:value specifically inside cb:observation in the selected item."""
     for obs in item.iter():
         if localname(obs.tag) == "observation":
-            # Find <...:value> inside that observation
             for v in obs.iter():
                 if localname(v.tag) == "value":
                     txt = (v.text or "").strip()
@@ -91,12 +87,12 @@ def main() -> int:
 
         item = find_item_by_rate_name(root, TARGET_RATE_NAME)
         if item is None:
-            raise RuntimeError(f"Could not find <item> containing rateName={TARGET_RATE_NAME}")
+            raise RuntimeError("Could not find <item> containing rateName={}".format(TARGET_RATE_NAME))
 
-        # date: prefer item-level dc:date, fallback to any date within item
         dc_date = find_first_desc_text(item, "date")
         if not dc_date:
             raise RuntimeError("dc:date not found in matched item")
+
         date_iso = parse_date_to_yyyy_mm_dd(dc_date)
 
         value_txt = find_observation_value(item)
@@ -117,11 +113,11 @@ def main() -> int:
         with open(OUT_PATH, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-        print(f"✅ Wrote {OUT_PATH}: date={payload['date']}, value={payload['value']}")
+        print("✅ Wrote {}: date={}, value={}".format(OUT_PATH, payload["date"], payload["value"]))
         return 0
 
     except Exception as e:
-        print(f"❌ Error: {e}", file=sys.stderr)
+        print("❌ Error: {}".format(e), file=sys.stderr)
         return 1
 
 
