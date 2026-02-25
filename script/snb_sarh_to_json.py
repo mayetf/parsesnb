@@ -19,7 +19,13 @@ def localname(tag: str) -> str:
 
 
 def fetch_xml(url: str) -> bytes:
-    req = Request(url, headers={"User-Agent": "github-actions-xml-parser/1.0"})
+    req = Request(
+        url,
+        headers={
+            "User-Agent": "github-actions-xml-parser/1.0",
+            "Accept": "application/xml,text/xml,application/rss+xml,*/*",
+        },
+    )
     with urlopen(req, timeout=30) as resp:
         return resp.read()
 
@@ -28,17 +34,19 @@ def parse_date_to_yyyy_mm_dd(s: str) -> str:
     s = (s or "").strip()
     if not s:
         raise ValueError("Empty dc:date")
-    # ISO fast path (most common)
+
+    # Most common: ISO, keep first 10 chars
     if len(s) >= 10 and s[4] == "-" and s[7] == "-":
         return s[:10]
-    # Fallback: try fromisoformat
+
+    # Fallback ISO parser
     s2 = s.replace("Z", "+00:00")
     d = dt.datetime.fromisoformat(s2)
     return d.date().isoformat()
 
 
-def find_first_desc_text(parent: ET.Element, wanted_local: str):
-    """First descendant text matching localname == wanted_local."""
+def find_first_desc_text(parent: ET.Element, wanted_local: str) -> str | None:
+    """Return first descendant text where localname(tag) == wanted_local."""
     for el in parent.iter():
         if localname(el.tag) == wanted_local:
             txt = (el.text or "").strip()
@@ -47,16 +55,33 @@ def find_first_desc_text(parent: ET.Element, wanted_local: str):
     return None
 
 
-def find_items(root: ET.Element):
+def find_item_by_rate_name(root: ET.Element, rate_name: str) -> ET.Element | None:
+    """Find the <item> that contains <...:rateName>rate_name</...:rateName> anywhere inside."""
     for el in root.iter():
-        if localname(el.tag) == "item":
-            yield el
+        if localname(el.tag) != "item":
+            continue
+
+        # look for any descendant with localname == 'rateName'
+        for rn in el.iter():
+            if localname(rn.tag) == "rateName" and (rn.text or "").strip() == rate_name:
+                return el
+
+    return None
 
 
-def find_observations(item: ET.Element):
-    for el in item.iter():
-        if localname(el.tag) == "observation":
-            yield el
+def find_observation_value(item: ET.Element) -> str | None:
+    """
+    Find cb:value specifically inside cb:observation in the selected item.
+    """
+    # Find first <...:observation> inside item
+    for obs in item.iter():
+        if localname(obs.tag) == "observation":
+            # Find <...:value> inside that observation
+            for v in obs.iter():
+                if localname(v.tag) == "value":
+                    txt = (v.text or "").strip()
+                    return txt if txt else None
+    return None
 
 
 def main() -> int:
@@ -64,33 +89,19 @@ def main() -> int:
         xml_bytes = fetch_xml(XML_URL)
         root = ET.fromstring(xml_bytes)
 
-        matched_item = None
-        matched_obs = None
+        item = find_item_by_rate_name(root, TARGET_RATE_NAME)
+        if item is None:
+            raise RuntimeError(f"Could not find <item> containing rateName={TARGET_RATE_NAME}")
 
-        # 1) Find the <item> that contains an <cb:observation> with <cb:rateName>SARH</cb:rateName>
-        for item in find_items(root):
-            for obs in find_observations(item):
-                rn = find_first_desc_text(obs, "rateName")
-                if rn == TARGET_RATE_NAME:
-                    matched_item = item
-                    matched_obs = obs
-                    break
-            if matched_item is not None:
-                break
-
-        if matched_item is None or matched_obs is None:
-            raise RuntimeError(f"Could not find item/observation for rateName={TARGET_RATE_NAME}")
-
-        # 2) Extract dc:date (as requested) — generally at item-level
-        dc_date = find_first_desc_text(matched_item, "date")
+        # date: prefer item-level dc:date, fallback to any date within item
+        dc_date = find_first_desc_text(item, "date")
         if not dc_date:
             raise RuntimeError("dc:date not found in matched item")
         date_iso = parse_date_to_yyyy_mm_dd(dc_date)
 
-        # 3) Extract cb:value INSIDE the matched observation
-        value_txt = find_first_desc_text(matched_obs, "value")
+        value_txt = find_observation_value(item)
         if not value_txt:
-            raise RuntimeError("cb:value not found in matched observation")
+            raise RuntimeError("cb:observation/cb:value not found in matched item")
 
         value_num = float(value_txt.replace(",", "."))
 
